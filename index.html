@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Valet App - Test Page</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+      }
+
+      .container {
+        text-align: center;
+        padding: 40px;
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border-radius: 20px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        max-width: 600px;
+      }
+
+      h1 {
+        font-size: 3em;
+        margin-bottom: 20px;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      p {
+        font-size: 1.2em;
+        margin-bottom: 15px;
+        opacity: 0.9;
+      }
+
+      .status {
+        display: inline-block;
+        padding: 10px 20px;
+        background: rgba(76, 175, 80, 0.3);
+        border: 2px solid #4caf50;
+        border-radius: 25px;
+        margin-top: 20px;
+        font-weight: bold;
+      }
+
+      .info-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-top: 30px;
+      }
+
+      .info-card {
+        background: rgba(255, 255, 255, 0.15);
+        padding: 20px;
+        border-radius: 10px;
+        transition: transform 0.3s ease;
+      }
+
+      .info-card:hover {
+        transform: translateY(-5px);
+      }
+
+      .info-card h3 {
+        font-size: 0.9em;
+        opacity: 0.8;
+        margin-bottom: 10px;
+      }
+
+      .info-card p {
+        font-size: 1.5em;
+        margin: 0;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.6;
+        }
+      }
+
+      .pulse {
+        animation: pulse 2s infinite;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🚀 Valet</h1>
+      <p>Success! Your Valet server is running!</p>
+      <div class="status pulse">✅ Server Active</div>
+
+      <div class="info-grid">
+        <div class="info-card">
+          <h3>Port</h3>
+          <p id="port">8080</p>
+        </div>
+        <div class="info-card">
+          <h3>Status</h3>
+          <p>Running</p>
+        </div>
+        <div class="info-card">
+          <h3>Time</h3>
+          <p id="time">--:--:--</p>
+        </div>
+        <div class="info-card">
+          <h3>Browser</h3>
+          <p>Edge/Chrome</p>
+        </div>
+      </div>
+
+      <p style="margin-top: 30px; font-size: 0.9em; opacity: 0.7">
+        Powered by Valet • NW.js Alternative
+      </p>
+    </div>
+
+    <script>
+      // Update time every second
+      function updateTime() {
+        const now = new Date();
+        const hours = String(now.getHours()).padStart(2, "0");
+        const minutes = String(now.getMinutes()).padStart(2, "0");
+        const seconds = String(now.getSeconds()).padStart(2, "0");
+        document.getElementById(
+          "time"
+        ).textContent = `${hours}:${minutes}:${seconds}`;
+      }
+
+      updateTime();
+      setInterval(updateTime, 1000);
+
+      // Detect port from URL
+      const port = window.location.port || "80";
+      document.getElementById("port").textContent = port;
+    </script>
+  </body>
+</html>

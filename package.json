@@ -1,0 +1,21 @@
+{
+  "name": "valet-app",
+  "main": "index.html",
+  "chromium-args": "",
+  "window": {
+    "title": "Valet App",
+    "width": 960,
+    "height": 720,
+    "position": "center"
+  },
+  "valet": {
+    "server": {
+      "port": 0
+    },
+    "browser": {
+      "executable": "msedge",
+      "userDataDir": ".valet_data",
+      "incognitoMode": true
+    }
+  }
+}
