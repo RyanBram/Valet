@@ -1,22 +1,38 @@
+@echo off
+SET icon=%~dp0assets\icons\application.ico
+SET fileversion=1.0
+SET filedescription=Valet
+echo ================================================
+echo   Building app
+echo ================================================
+ECHO "Choose your build type"
+ECHO 1. debug
+ECHO 2. release
+SET srcdir=%~dp0src
+SET rcedit=%~dp0bin\rcedit\rcedit-x64.exe
+SET /p buildtype="Type: "
+
+if /i "%buildtype%"=="1" goto debug
+if /i "%buildtype%"=="2" goto release
+
+echo.
+echo ================================================
+echo   Build Complete!
+echo ================================================
+pause
+
 @ECHO off
 
-ECHO "Choose your backend"
-ECHO 1. c backend
-ECHO 2. js backend
-SET /p backend= "Backend: "
-
-if /i "%backend%"=="1" goto c_backend
-if /i "%backend%"=="2" goto js_backend
-
-:c_backend
-ECHO compile c
-nim c "%~dpn1.nim"
+:debug
+ECHO Compile debug
+nim c -f -d:release --opt:size "%srcdir%\valet.nim"
 goto done
 
-:js_backend
-ECHO compile js
-nim js -d:release "%~dpn1.nim"
+:release
+ECHO Compile release
+nim c -f -d:release --opt:size --app:gui "%srcdir%\valet.nim"
 goto done
 
 :done
+"%rcedit%" "%srcdir%\valet.exe" --set-icon "%icon%" --set-file-version "%fileversion%" --set-product-version "%fileversion%" --set-version-string "FileDescription" "%filedescription%"
 pause

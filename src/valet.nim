@@ -1,6 +1,33 @@
 import std/[asynchttpserver, asyncdispatch, json, os, osproc, strutils,
     strformat, times, net]
 
+when defined(windows):
+  type
+    RECT {.pure.} = object
+      left, top, right, bottom: int32
+  
+  proc SystemParametersInfoW(uiAction: uint32, uiParam: uint32, 
+                              pvParam: pointer, fWinIni: uint32): int32 
+                              {.stdcall, dynlib: "user32", importc.}
+  const
+    SPI_GETWORKAREA = 0x0030  # Get work area (screen minus taskbar)
+
+proc getWorkArea(): tuple[x, y, width, height: int] =
+  ## Get usable screen area (excluding taskbar)
+  when defined(windows):
+    var rect: RECT
+    discard SystemParametersInfoW(SPI_GETWORKAREA, 0, addr rect, 0)
+    result.x = rect.left
+    result.y = rect.top
+    result.width = rect.right - rect.left
+    result.height = rect.bottom - rect.top
+  else:
+    # Fallback for non-Windows
+    result.x = 0
+    result.y = 0
+    result.width = 1920
+    result.height = 1080
+
 type
   Config = object
     # NW.js compatible fields
@@ -15,7 +42,8 @@ type
     serverPort: int # 0 = auto-detect
     browserExe: string
     userDataDir: string
-    incognitoMode: bool
+    privateMode: bool
+    showToolbar: bool # false = app mode, true = regular browser with toolbar
 
 proc findAvailablePort(startPort: int = 8000): int =
   ## Find available port starting from startPort
@@ -63,17 +91,44 @@ proc loadConfig(filename: string): Config =
       let browser = valet["browser"]
       result.browserExe = browser{"executable"}.getStr("msedge")
       result.userDataDir = browser{"userDataDir"}.getStr(".valet_data")
-      result.incognitoMode = browser{"incognitoMode"}.getBool(true)
+      result.privateMode = browser{"privateMode"}.getBool(true)
+      result.showToolbar = browser{"showToolbar"}.getBool(true)
     else:
       result.browserExe = "msedge"
       result.userDataDir = ".valet_data"
-      result.incognitoMode = true
+      result.privateMode = true
+      result.showToolbar = true
   else:
     # Defaults if no valet section
     result.serverPort = 0 # auto-detect
     result.browserExe = "msedge"
     result.userDataDir = ".valet_data"
-    result.incognitoMode = true
+    result.privateMode = true
+    result.showToolbar = true
+
+proc createDefaultPackageJson(filename: string) =
+  ## Create a default package.json file with standard fields
+  let defaultConfig = %*{
+    "name": "valet-app",
+    "main": "index.html",
+    "window": {
+      "title": "Valet App",
+      "width": 960,
+      "height": 720
+    },
+    "valet": {
+      "server": {
+        "port": 0
+      },
+      "browser": {
+        "executable": "msedge",
+        "userDataDir": ".valet_data",
+        "privateMode": true,
+        "showToolbar": true
+      }
+    }
+  }
+  writeFile(filename, defaultConfig.pretty())
 
 proc getMimeType(ext: string): string =
   ## Determine MIME type based on file extension
@@ -179,15 +234,21 @@ proc launchBrowser(config: Config, url: string): Process =
   ## Returns: Process object for monitoring
   var args: seq[string] = @[]
 
-  # Always use --app mode for NW.js replacement
-  args.add(&"--app={url}")
-
-  # Set window title (best effort - may not work in all browsers)
-  if config.windowTitle.len > 0:
-    args.add(&"--app-name={config.windowTitle}")
+  # Use --app mode only if showToolbar is false (hide browser chrome)
+  if not config.showToolbar:
+    args.add(&"--app={url}")
+    # Set window title (best effort - may not work in all browsers)
+    if config.windowTitle.len > 0:
+      args.add(&"--app-name={config.windowTitle}")
 
   # Window size
   args.add(&"--window-size={config.windowWidth},{config.windowHeight}")
+
+  # Center window on screen (taskbar-aware)
+  let workArea = getWorkArea()
+  let posX = workArea.x + (workArea.width - config.windowWidth) div 2
+  let posY = workArea.y + (workArea.height - config.windowHeight) div 2
+  args.add(&"--window-position={posX},{posY}")
 
   # Default flags for clean environment (hardcoded)
   args.add("--disable-extensions") # Disable all browser extensions
@@ -201,13 +262,22 @@ proc launchBrowser(config: Config, url: string): Process =
       if arg.len > 0:
         args.add(arg)
 
-  # Incognito mode or user data directory
-  if config.incognitoMode:
-    args.add("--incognito")
-  else:
-    let currentDir = getCurrentDir()
-    let userDataPath = currentDir / config.userDataDir
-    args.add(&"--user-data-dir={userDataPath}")
+  # Always use user data directory for consistent window sizing
+  let currentDir = getCurrentDir()
+  let userDataPath = currentDir / config.userDataDir
+  args.add(&"--user-data-dir={userDataPath}")
+
+  # Add incognito/inprivate flag if requested (alongside user-data-dir)
+  if config.privateMode:
+    # Edge uses --inprivate, Chrome uses --incognito
+    if config.browserExe.toLowerAscii().contains("edge"):
+      args.add("--inprivate")
+    else:
+      args.add("--incognito")
+
+  # Add URL at the end for toolbar mode
+  if config.showToolbar:
+    args.add(url)
 
   # Find actual browser path
   let browserPath = findBrowserPath(config.browserExe)
@@ -253,9 +323,9 @@ proc main() =
   let configFile = getCurrentDir() / "package.json"
 
   if not fileExists(configFile):
-    echo "[ERROR] package.json not found!"
-    echo "[ERROR] Please create package.json in the same directory"
-    quit(1)
+    echo "[CONFIG] package.json not found, creating default..."
+    createDefaultPackageJson(configFile)
+    echo "[CONFIG] Created package.json with default settings"
 
   # Load configuration
   echo "[CONFIG] Loading configuration from package.json..."

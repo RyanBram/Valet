@@ -2,9 +2,9 @@
 
 version       = "1.0.0"
 author        = "Valet"
-description   = "NW.js Alternative HTTP Server with Browser Launcher"
+description   = "HTTP Server with Browser Launcher"
 license       = "MIT"
-srcDir        = "."
+srcDir        = "src"
 bin           = @["valet"]
 
 # Dependencies
