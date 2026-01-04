@@ -89,7 +89,16 @@ proc loadConfig(filename: string): Config =
 
     if valet.hasKey("browser"):
       let browser = valet["browser"]
-      result.browserExe = browser{"executable"}.getStr("msedge")
+      # Check if executable field exists and get its value
+      # If browser section exists but executable is not specified, assume server-only mode
+      if browser.hasKey("executable"):
+        result.browserExe = browser["executable"].getStr("")
+      else:
+        result.browserExe = ""  # Server-only mode when executable field is missing
+      
+      # If browserExe is explicitly set to empty string, keep it empty (server-only mode)
+      if result.browserExe == "":
+        echo "[INFO] Browser executable not specified - running in server-only mode"
       result.userDataDir = browser{"userDataDir"}.getStr(".valet_data")
       result.privateMode = browser{"privateMode"}.getBool(true)
       result.showToolbar = browser{"showToolbar"}.getBool(true)
@@ -315,7 +324,7 @@ proc launchBrowser(config: Config, url: string): Process =
 
 proc main() =
   echo "================================================"
-  echo "  VALET - NW.js Alternative Server & Launcher"
+  echo "  VALET - Lightweight Local Webserver
   echo "================================================"
   echo ""
 
@@ -362,12 +371,20 @@ proc main() =
   echo "[INFO] Waiting for server to start..."
   sleep(2000) # 2 seconds
   
-  # Launch browser (no monitoring in console mode)
-  discard launchBrowser(config, url)
+  # Launch browser only if browser executable is specified
+  if config.browserExe != "":
+    discard launchBrowser(config, url)
+  else:
+    echo "[INFO] Server-only mode - no browser will be launched"
+    echo &"[INFO] You can access the application at: {url}"
 
   echo ""
   echo "================================================"
-  echo "  Application Running"
+  if config.browserExe != "":
+    echo "  Application Running"
+  else:
+    echo "  Server Running (Server-Only Mode)"
+    echo &"  URL: {url}"
   echo "  Press Ctrl+C or close console to exit"
   echo "================================================"
   echo ""

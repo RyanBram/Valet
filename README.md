@@ -1,19 +1,26 @@
-# Valet
+<p align="center">
+  <img src="./assets/icons/valet.svg" width="200" alt="Valet Logo">
+</p>
 
-**Valet** is a lightweight HTML5 games and standalone web applications launcher. It provides a built-in HTTP server and automated browser launcher with a clean, isolated environment.
+<h1 align="center">Valet</h1>
+<p align="center">Lightweight local web server and browser launcher — serve HTML5 apps with zero configuration</p>
+
+---
 
 ## Features
 
-- ✅ **Auto Port Detection** - No port conflicts
-- ✅ **Tiny Size** - ~1 MB vs 200 MB for Electron/NW.js
-- ✅ **Fast Startup** - 1-2 seconds
-- ✅ **Console Output** - Always visible for debugging
+- 🚀 **Auto Port Detection** - Automatically finds available ports, no conflicts
+- 🪶 **Tiny Size** - ~1 MB executable vs 200 MB for Electron/NW.js
+- ⚡ **Fast Startup** - Launch in 1-2 seconds with built-in HTTP server
+- 🌐 **Browser Integration** - Uses Edge/Chrome in app mode for native feel
+- 🔧 **NW.js Compatible** - Drop-in replacement using `package.json` configuration
+- 📊 **Console Output** - Always-visible debugging and server logs
 
 ## Quick Start
 
-### Minimal Configuration
+### Minimal Setup
 
-Create a `package.json` in your project directory:
+1. Create a `package.json` in your project directory:
 
 ```json
 {
@@ -27,7 +34,9 @@ Create a `package.json` in your project directory:
 }
 ```
 
-Place `valet.exe` in the same directory and run:
+2. Place `valet.exe` in the same directory
+
+3. Run the application:
 
 ```powershell
 .\valet.exe
@@ -42,69 +51,74 @@ That's it! Valet will:
 
 ## Configuration
 
-### Full Configuration Example
+Valet supports both NW.js-compatible fields and Valet-specific options:
+
+### Basic Configuration
+
+| Field           | Type   | Default        | Description            |
+| --------------- | ------ | -------------- | ---------------------- |
+| `name`          | string | `"valet-app"`  | Application name       |
+| `main`          | string | `"index.html"` | Entry HTML file        |
+| `window.title`  | string | `"Valet App"`  | Window title           |
+| `window.width`  | int    | `960`          | Window width (pixels)  |
+| `window.height` | int    | `720`          | Window height (pixels) |
+
+### Advanced Configuration
 
 ```json
 {
-  "name": "my-game",
+  "name": "valet-app",
   "main": "index.html",
-  "chromium-args": "--force-color-profile=srgb",
   "window": {
-    "title": "My Game",
-    "width": 1280,
-    "height": 720,
-    "position": "center"
+    "title": "Valet App",
+    "width": 960,
+    "height": 720
   },
   "valet": {
     "server": {
-      "port": 8080
+      "port": 0
     },
     "browser": {
       "executable": "msedge",
       "userDataDir": ".valet_data",
-      "incognitoMode": true
+      "privateMode": true,
+      "showToolbar": true
     }
   }
 }
 ```
 
-### Configuration Options
+### Valet-Specific Options
 
-**NW.js Compatible Fields:**
+| Field                         | Type   | Default         | Description                |
+| ----------------------------- | ------ | --------------- | -------------------------- |
+| `valet.server.port`           | int    | `0`             | Port (0 = auto-detect)     |
+| `valet.browser.executable`    | string | `"msedge"`      | Browser to use             |
+| `valet.browser.userDataDir`   | string | `".valet_data"` | User data directory        |
+| `valet.browser.incognitoMode` | bool   | `true`          | Use incognito/private mode |
 
-- `name` - Application name (default: `"valet-app"`)
-- `main` - Entry HTML file (default: `"index.html"`)
-- `chromium-args` - Extra Chromium flags (default: `""`)
-- `window.title` - Window title (default: `"Valet App"`)
-- `window.width` - Window width in pixels (default: `960`)
-- `window.height` - Window height in pixels (default: `720`)
+### Default Chromium Flags
 
-**Valet-Specific Fields:**
+Valet automatically applies these flags for a clean environment:
 
-- `valet.server.port` - HTTP server port, 0 = auto-detect (default: `0`)
-- `valet.browser.executable` - Browser to use (default: `"msedge"`)
-- `valet.browser.userDataDir` - User data directory (default: `".valet_data"`)
-- `valet.browser.incognitoMode` - Use incognito mode (default: `true`)
-
-### Clean Environment Defaults
-
-Valet hardcodes these Chromium flags for a clean environment:
-
-- `--disable-extensions` - Disables all browser extensions
+- `--disable-extensions` - Disables browser extensions
 - `--disable-translate` - Disables Google Translate popup
 - `--incognito` - Private browsing mode (when `incognitoMode: true`)
 
-## Compilation
+## Build from Source
 
 ### Prerequisites
 
-1. Install Nim compiler from [nim-lang.org](https://nim-lang.org/)
-2. Verify installation:
-   ```powershell
-   nim --version
-   ```
+- **Nim >= 2.0.0** - Install from [nim-lang.org](https://nim-lang.org/)
+- **Git** - For cloning the repository
 
-### Build
+Verify Nim installation:
+
+```powershell
+nim --version
+```
+
+### Compilation
 
 **Using build script:**
 
@@ -115,68 +129,101 @@ Valet hardcodes these Chromium flags for a clean environment:
 **Manual compilation:**
 
 ```powershell
-nim c -d:release --opt:size -o:valet.exe valet.nim
+nim c -d:release --opt:size -o:valet.exe src/valet.nim
 ```
 
 **Output:** `valet.exe` (~1 MB)
 
 ### Build Options
 
-For maximum optimization:
+For maximum size optimization:
 
 ```powershell
-nim c -d:release --opt:size --passL:-s valet.nim
+nim c -d:release --opt:size --passL:-s src/valet.nim
 ```
 
 Flags explained:
 
-- `-d:release` - Release mode with optimizations
+- `-d:release` - Enable release mode optimizations
 - `--opt:size` - Optimize for smaller binary size
-- `--passL:-s` - Strip debug symbols (even smaller)
+- `--passL:-s` - Strip debug symbols
 
-## Supported File Types
+## Supported Engines
 
-Valet serves files with proper MIME types:
+Valet works seamlessly with popular HTML5 game engines and web frameworks:
 
-- **Web:** HTML, CSS, JavaScript, JSON
-- **WebAssembly:** .wasm
-- **Images:** PNG, JPG, GIF, SVG, ICO, WebP
-- **Fonts:** WOFF, WOFF2, TTF
-- **Audio:** MP3, OGG, WAV
-- **Video:** MP4, WebM
-- **Custom:** Any extension → `application/octet-stream`
+<p align="center">
+  <img src="./assets/icons/construct3.png" height="48" alt="Construct 3" title="Construct 3">
+  <br>
+  <img src="./assets/icons/gdevelop.png" height="48" alt="GDevelop" title="GDevelop">
+  <br>
+  <img src="./assets/icons/rpgmakermv.png" height="48" alt="RPG Maker MV/MZ" title="RPG Maker MV/MZ">
+</p>
+
+<p align="center"><sub>...and many more HTML5 frameworks!</sub></p>
 
 ## Use Cases
 
-- 🎮 **RPG Maker MV/MZ Games** - Try your game before publishing to web
-- 🌐 **HTML5 Standalone Apps** - Package web apps as desktop apps
-- 📦 **Electron Alternative** - Lighter weight for simple apps
-- 🔧 **Local Web Development** - Quick HTTP server with browser
-- 🎨 **Interactive Presentations** - HTML-based presentations
+- 🎮 **RPG Maker MV/MZ Games** - Test games locally before web deployment
+- 📦 **HTML5 Game Distribution** - Package Construct 3 or GDevelop games
+- 🌐 **Standalone Web Apps** - Convert web apps to desktop applications
+- 🔧 **Local Development** - Quick HTTP server with automatic browser launch
+- 🎨 **Interactive Presentations** - Serve HTML-based presentations locally
+
+## Comparison with Alternatives
+
+| Feature        | Valet          | Rover          | Electron/NW.js   |
+| -------------- | -------------- | -------------- | ---------------- |
+| Size           | ~1 MB          | ~200 KB        | ~200 MB          |
+| Startup Time   | 1-2 seconds    | Instant        | 3-5 seconds      |
+| Memory Usage   | ~50 MB         | ~30 MB         | ~150 MB          |
+| Server         | HTTP server    | No server      | No server        |
+| Node.js APIs   | ❌ No          | ❌ No          | ✅ Yes           |
+| Console Output | Always visible | Hidden         | Hidden           |
+| Rendering      | OS Browser     | Native WebView | Bundled Chromium |
+
+### When to Use Valet
+
+✅ Your app needs HTTP server functionality  
+✅ You want visible console output for debugging  
+✅ You prefer using the OS's browser engine  
+✅ You need to test web apps before deployment
+
+### When to Use Rover
+
+✅ You want the absolute smallest package size  
+✅ You need instant startup (no server overhead)  
+✅ Your app doesn't require HTTP server features
+
+### When to Use Electron/NW.js
+
+✅ You need Node.js APIs (fs, child_process, etc.)  
+✅ You require consistent rendering across platforms  
+✅ You need advanced desktop integration features
 
 ## Console Mode
 
 Valet always runs in console mode, displaying:
 
 - Server startup information
-- Auto-detected port
+- Auto-detected port number
 - Browser launch details
 - HTTP request logs (optional)
-- Error messages
-
-**To exit:** Press `Ctrl+C` or close the console window
+- Error messages and debugging info
 
 **Server Behavior:**
 
 - **Browser closes** → Server continues running (you can refresh or reopen)
-- **Console closes** → Server shuts down immediately (clean start next launch)
+- **Console closes** → Server shuts down immediately
+
+**To exit:** Press `Ctrl+C` or close the console window
 
 This ensures:
 
 - ✅ Clean start every time you run `valet.exe`
 - ✅ Page refreshing without server restart
 - ✅ Opening multiple browser windows
-- ✅ Server only runs when you want it (close console to stop)
+- ✅ Server only runs when you want it
 
 ## Migration from NW.js
 
@@ -184,51 +231,23 @@ Valet is designed as a drop-in replacement for NW.js:
 
 1. **Backup your NW.js executable:**
 
-   ```powershell
-   copy nw.exe nw.exe.bak
-   ```
+```powershell
+copy nw.exe nw.exe.bak
+```
 
 2. **Replace with Valet:**
 
-   ```powershell
-   copy valet.exe nw.exe
-   ```
+```powershell
+copy valet.exe nw.exe
+```
 
-3. **Update package.json** (optional):
+3. **Run your existing application:**
 
-   - Change `"reserve"` section to `"valet"` if present
-   - Adjust paths as needed
+```powershell
+.\nw.exe
+```
 
-4. **Run:**
-   ```powershell
-   .\nw.exe
-   ```
-
-Your existing `package.json` will work as-is!
-
-### Differences from NW.js
-
-| Feature        | Electron/NW.js | Valet          |
-| -------------- | -------------- | -------------- |
-| Size           | ~200 MB        | ~1 MB          |
-| Startup Time   | 3-5 seconds    | 1-2 seconds    |
-| Memory Usage   | ~150 MB        | ~50 MB         |
-| Node.js APIs   | ✅ Yes         | ❌ No          |
-| Console Output | Hidden         | Always visible |
-| Auto Port      | No             | Yes            |
-
-**Use Valet when:**
-
-- Your app is pure HTML5/JavaScript
-- You don't need Node.js APIs
-- You want a smaller, faster package
-- Target platform is Windows only
-
-**Use Electron/NW.js when:**
-
-- You need Node.js APIs (fs, child_process, etc.)
-- Cross-platform support required
-- Using NW.js-specific features
+Your existing `package.json` will work as-is! Optionally add Valet-specific configuration under the `"valet"` section.
 
 ## Troubleshooting
 
@@ -238,15 +257,16 @@ Your existing `package.json` will work as-is!
 
 **Solution:**
 
-- Valet searches default installation paths
-- Manually specify browser in package.json:
-  ```json
-  {
-    "valet": {
-      "browser": { "executable": "chrome" }
-    }
+- Valet searches default installation paths for Edge/Chrome
+- Manually specify browser in `package.json`:
+
+```json
+{
+  "valet": {
+    "browser": { "executable": "chrome" }
   }
-  ```
+}
+```
 
 ### Port Already in Use
 
@@ -254,29 +274,46 @@ Your existing `package.json` will work as-is!
 
 **Solution:**
 
-- Set `"port": 0` for auto-detection (default)
-- Manually specify different port:
-  ```json
-  {
-    "valet": {
-      "server": { "port": 9000 }
-    }
+- Set `"port": 0` for auto-detection (default behavior):
+
+```json
+{
+  "valet": {
+    "server": { "port": 0 }
   }
-  ```
+}
+```
+
+- Or manually specify a different port:
+
+```json
+{
+  "valet": {
+    "server": { "port": 9000 }
+  }
+}
+```
 
 ### WebAssembly Not Loading
 
-**Error:** `Uncaught TypeError: Failed to execute 'compile' on 'WebAssembly'`
+**Error:** `Failed to execute 'compile' on 'WebAssembly'`
 
 **Solution:**
 
-- Valet automatically serves .wasm files with correct MIME type
-- Ensure .wasm files are in the served directory
-- Check browser console for detailed errors
+- Valet automatically serves `.wasm` files with correct MIME type (`application/wasm`)
+- Ensure `.wasm` files are in the served directory
+- Check browser console for detailed error messages
+- Verify your WebAssembly module is valid
 
-## License
+### CORS Errors
 
-MIT License - Feel free to use in your projects!
+**Error:** `Access to fetch blocked by CORS policy`
+
+**Solution:**
+
+- Valet's HTTP server handles CORS automatically for local files
+- If loading external resources, ensure they have proper CORS headers
+- For development, use relative paths for all local resources
 
 ## Project Structure
 
@@ -287,13 +324,19 @@ my-app/
 ├── index.html          # Entry point
 ├── js/                 # JavaScript files
 ├── css/                # Stylesheets
-└── assets/             # Images, fonts, etc.
+├── assets/             # Images, fonts, audio
+│   ├── images/
+│   ├── fonts/
+│   └── audio/
+└── libs/               # Third-party libraries
 ```
 
-## Credits
+## License
 
-Built with [Nim](https://nim-lang.org/) programming language.
+MIT License - Feel free to use in your projects!
 
 ---
 
-**Valet** - Lightweight local server 🚀
+<p align="center">
+  <sub>Built with <img src="./assets/icons/nim-lang.svg" height="14" alt="Nim"></sub>
+</p>
