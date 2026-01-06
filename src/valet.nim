@@ -324,7 +324,7 @@ proc launchBrowser(config: Config, url: string): Process =
 
 proc main() =
   echo "================================================"
-  echo "  VALET - Lightweight Local Webserver
+  echo "  VALET - Lightweight Local Webserver"
   echo "================================================"
   echo ""
 
