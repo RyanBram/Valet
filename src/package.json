@@ -11,10 +11,10 @@
       "port": 0
     },
     "browser": {
-      "executable": "chrome",
+      "executable": "msedge",
       "userDataDir": ".valet_data",
-      "privateMode": false,
-      "showToolbar": false
+      "privateMode": true,
+      "showToolbar": true
     }
   }
 }

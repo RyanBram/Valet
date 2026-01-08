@@ -139,9 +139,39 @@ proc createDefaultPackageJson(filename: string) =
   }
   writeFile(filename, defaultConfig.pretty())
 
-proc getMimeType(ext: string): string =
-  ## Determine MIME type based on file extension
+proc getCompoundExt(filename: string): string =
+  ## Get compound extension for Unity WebGL files (e.g., ".data.gz", ".wasm.br")
+  let lowerName = filename.toLowerAscii()
+  # Check for Unity compound extensions first (order matters - check longest first)
+  const compoundExts = [
+    ".symbols.json.gz", ".symbols.json.br", ".symbols.json",
+    ".data.gz", ".data.br", ".wasm.gz", ".wasm.br", ".js.gz", ".js.br"
+  ]
+  for ext in compoundExts:
+    if lowerName.endsWith(ext):
+      return ext
+  # Fall back to simple extension
+  return splitFile(filename).ext
+
+proc getMimeType(filename: string): string =
+  ## Determine MIME type based on file extension (supports compound extensions)
+  let ext = getCompoundExt(filename)
   case ext.toLowerAscii()
+  # Unity WebGL compressed files (gzip)
+  of ".data.gz": "application/octet-stream"
+  of ".wasm.gz": "application/wasm"
+  of ".js.gz": "application/javascript"
+  of ".symbols.json.gz": "application/octet-stream"
+  # Unity WebGL compressed files (brotli)
+  of ".data.br": "application/octet-stream"
+  of ".wasm.br": "application/wasm"
+  of ".js.br": "application/javascript"
+  of ".symbols.json.br": "application/octet-stream"
+  # Unity WebGL uncompressed files
+  of ".data": "application/octet-stream"
+  of ".symbols.json": "application/octet-stream"
+  of ".unityweb": "application/octet-stream"
+  # Standard web files
   of ".html", ".htm": "text/html"
   of ".css": "text/css"
   of ".js": "application/javascript"
@@ -163,6 +193,15 @@ proc getMimeType(ext: string): string =
   of ".txt": "text/plain"
   else: "application/octet-stream"
 
+proc getContentEncoding(filename: string): string =
+  ## Get Content-Encoding for compressed files (gzip or brotli)
+  let lowerName = filename.toLowerAscii()
+  if lowerName.endsWith(".gz"):
+    return "gzip"
+  elif lowerName.endsWith(".br"):
+    return "br"
+  return ""
+
 proc handleRequest(req: Request, baseDir: string) {.async.} =
   ## Handle HTTP request
   var path = req.url.path
@@ -177,13 +216,18 @@ proc handleRequest(req: Request, baseDir: string) {.async.} =
   try:
     if fileExists(filePath):
       let content = readFile(filePath)
-      let ext = splitFile(filePath).ext
-      let mimeType = getMimeType(ext)
+      let mimeType = getMimeType(filePath)
+      let contentEncoding = getContentEncoding(filePath)
 
-      await req.respond(Http200, content, newHttpHeaders([
+      # Build headers with optional Content-Encoding for compressed files
+      var headers = @[
         ("Content-Type", mimeType),
         ("Cache-Control", "no-cache")
-      ]))
+      ]
+      if contentEncoding.len > 0:
+        headers.add(("Content-Encoding", contentEncoding))
+
+      await req.respond(Http200, content, newHttpHeaders(headers))
     else:
       await req.respond(Http404, "404 - File Not Found")
   except:
