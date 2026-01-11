@@ -1,5 +1,5 @@
 import std/[asynchttpserver, asyncdispatch, json, os, osproc, strutils,
-    strformat, times, net]
+    strformat, times, net, uri]
 
 when defined(windows):
   type
@@ -51,7 +51,7 @@ proc findAvailablePort(startPort: int = 8000): int =
     try:
       let sock = newSocket()
       sock.setSockOpt(OptReuseAddr, true)
-      sock.bindAddr(Port(port))
+      sock.bindAddr(Port(port), "127.0.0.1")
       sock.close()
       return port
     except OSError:
@@ -145,6 +145,7 @@ proc getCompoundExt(filename: string): string =
   # Check for Unity compound extensions first (order matters - check longest first)
   const compoundExts = [
     ".symbols.json.gz", ".symbols.json.br", ".symbols.json",
+    ".framework.js.gz", ".framework.js.br",
     ".data.gz", ".data.br", ".wasm.gz", ".wasm.br", ".js.gz", ".js.br"
   ]
   for ext in compoundExts:
@@ -160,12 +161,12 @@ proc getMimeType(filename: string): string =
   # Unity WebGL compressed files (gzip)
   of ".data.gz": "application/octet-stream"
   of ".wasm.gz": "application/wasm"
-  of ".js.gz": "application/javascript"
+  of ".js.gz", ".framework.js.gz": "application/javascript"
   of ".symbols.json.gz": "application/octet-stream"
   # Unity WebGL compressed files (brotli)
   of ".data.br": "application/octet-stream"
   of ".wasm.br": "application/wasm"
-  of ".js.br": "application/javascript"
+  of ".js.br", ".framework.js.br": "application/javascript"
   of ".symbols.json.br": "application/octet-stream"
   # Unity WebGL uncompressed files
   of ".data": "application/octet-stream"
@@ -206,6 +207,9 @@ proc handleRequest(req: Request, baseDir: string) {.async.} =
   ## Handle HTTP request
   var path = req.url.path
 
+  # URL decode path (handles %20 for spaces, etc.)
+  path = decodeUrl(path)
+
   # Root path -> index.html
   if path == "/" or path == "":
     path = "/index.html"
@@ -243,7 +247,8 @@ proc startServer(port: int, baseDir: string) {.async.} =
   echo &"[SERVER] Starting HTTP server on http://localhost:{port}"
   echo &"[SERVER] Serving files from: {baseDir}"
 
-  server.listen(Port(port))
+  # Bind to localhost only to avoid Windows Firewall prompts
+  server.listen(Port(port), "127.0.0.1")
 
   while true:
     if server.shouldAcceptRequest():
