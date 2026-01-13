@@ -44,6 +44,9 @@ type
     userDataDir: string
     privateMode: bool
     showToolbar: bool # false = app mode, true = regular browser with toolbar
+    nodeApi: bool # true = enable Node.js API (require fs), false = plain web server
+    startMaximized: bool # true = start window maximized
+    startFullscreen: bool # true = start in fullscreen mode
 
 proc findAvailablePort(startPort: int = 8000): int =
   ## Find available port starting from startPort
@@ -100,20 +103,30 @@ proc loadConfig(filename: string): Config =
       if result.browserExe == "":
         echo "[INFO] Browser executable not specified - running in server-only mode"
       result.userDataDir = browser{"userDataDir"}.getStr(".valet_data")
-      result.privateMode = browser{"privateMode"}.getBool(true)
+      result.privateMode = browser{"privateMode"}.getBool(false)
       result.showToolbar = browser{"showToolbar"}.getBool(true)
+      result.startMaximized = browser{"startMaximized"}.getBool(false)
+      result.startFullscreen = browser{"startFullscreen"}.getBool(false)
     else:
       result.browserExe = "msedge"
       result.userDataDir = ".valet_data"
-      result.privateMode = true
+      result.privateMode = false
       result.showToolbar = true
+      result.startMaximized = false
+      result.startFullscreen = false
+    
+    # Node.js API toggle (default: false - plain web server mode)
+    result.nodeApi = valet{"nodeApi"}.getBool(false)
   else:
     # Defaults if no valet section
     result.serverPort = 0 # auto-detect
     result.browserExe = "msedge"
     result.userDataDir = ".valet_data"
-    result.privateMode = true
+    result.privateMode = false
     result.showToolbar = true
+    result.startMaximized = false
+    result.startFullscreen = false
+    result.nodeApi = false  # Plain web server by default
 
 proc createDefaultPackageJson(filename: string) =
   ## Create a default package.json file with standard fields
@@ -126,14 +139,17 @@ proc createDefaultPackageJson(filename: string) =
       "height": 720
     },
     "valet": {
+      "nodeApi": false,
       "server": {
         "port": 0
       },
       "browser": {
         "executable": "msedge",
         "userDataDir": ".valet_data",
-        "privateMode": true,
-        "showToolbar": true
+        "privateMode": false,
+        "showToolbar": true,
+        "startMaximized": false,
+        "startFullscreen": false
       }
     }
   }
@@ -203,12 +219,117 @@ proc getContentEncoding(filename: string): string =
     return "br"
   return ""
 
-proc handleRequest(req: Request, baseDir: string) {.async.} =
-  ## Handle HTTP request
+# Polyfill script for NW.js compatibility
+const polyfillJs = staticRead("polyfill.js")
+
+proc handleRequest(req: Request, baseDir: string, nodeApiEnabled: bool) {.async.} =
+  ## Handle HTTP request - includes filesystem API endpoints if enabled
   var path = req.url.path
 
   # URL decode path (handles %20 for spaces, etc.)
   path = decodeUrl(path)
+
+  # ==========================================================================
+  # FILESYSTEM API ENDPOINTS (only when nodeApi is enabled)
+  # These endpoints allow browser JavaScript to perform filesystem operations
+  # ==========================================================================
+
+  if nodeApiEnabled:
+    # Serve polyfill.js
+    if path == "/__polyfill__.js":
+      await req.respond(Http200, polyfillJs, newHttpHeaders([
+        ("Content-Type", "application/javascript"),
+        ("Cache-Control", "no-cache")
+      ]))
+      return
+
+    # Get base directory
+    if path == "/__get_base_dir__":
+      await req.respond(Http200, baseDir, newHttpHeaders([
+        ("Content-Type", "text/plain"),
+        ("Cache-Control", "no-cache")
+      ]))
+      return
+
+    # Check file/dir existence
+    if path == "/__fs_exists__":
+      let filePath = decodeUrl(req.url.query.split("=")[^1])
+      let exists = fileExists(filePath) or dirExists(filePath)
+      await req.respond(Http200, if exists: "true" else: "false", newHttpHeaders([
+        ("Content-Type", "text/plain"),
+        ("Cache-Control", "no-cache")
+      ]))
+      return
+
+    # Write file (POST)
+    if path == "/__fs_write__" and req.reqMethod == HttpPost:
+      try:
+        let data = parseJson(req.body)
+        let filePath = data["path"].getStr()
+        let content = data["content"].getStr()
+        writeFile(filePath, content)
+        await req.respond(Http200, "ok", newHttpHeaders([("Content-Type", "text/plain")]))
+      except:
+        await req.respond(Http500, "Write failed: " & getCurrentExceptionMsg())
+      return
+
+    # Read file (GET)
+    if path == "/__fs_read__":
+      let filePath = decodeUrl(req.url.query.split("=")[^1])
+      try:
+        if fileExists(filePath):
+          let content = readFile(filePath)
+          await req.respond(Http200, content, newHttpHeaders([
+            ("Content-Type", "application/octet-stream"),
+            ("Cache-Control", "no-cache")
+          ]))
+        else:
+          await req.respond(Http404, "File not found")
+      except:
+        await req.respond(Http500, "Read failed: " & getCurrentExceptionMsg())
+      return
+
+    # Create directory (POST)
+    if path == "/__fs_mkdir__" and req.reqMethod == HttpPost:
+      try:
+        let data = parseJson(req.body)
+        let dirPath = data["path"].getStr()
+        createDir(dirPath)
+        await req.respond(Http200, "ok", newHttpHeaders([("Content-Type", "text/plain")]))
+      except:
+        await req.respond(Http200, "ok")  # Directory might exist, that's OK
+      return
+
+    # Delete file (POST)
+    if path == "/__fs_unlink__" and req.reqMethod == HttpPost:
+      try:
+        let data = parseJson(req.body)
+        let filePath = data["path"].getStr()
+        removeFile(filePath)
+        await req.respond(Http200, "ok", newHttpHeaders([("Content-Type", "text/plain")]))
+      except:
+        await req.respond(Http500, "Delete failed: " & getCurrentExceptionMsg())
+      return
+
+    # List directory (GET)
+    if path == "/__fs_list_dir__":
+      let dirPath = decodeUrl(req.url.query.split("=")[^1])
+      try:
+        var files: seq[string] = @[]
+        for kind, name in walkDir(dirPath):
+          files.add(extractFilename(name))
+        await req.respond(Http200, $(%files), newHttpHeaders([
+          ("Content-Type", "application/json"),
+          ("Cache-Control", "no-cache")
+        ]))
+      except:
+        await req.respond(Http200, "[]", newHttpHeaders([("Content-Type", "application/json")]))
+      return
+  # End of nodeApi block
+
+  # ==========================================================================
+  # STANDARD FILE SERVING
+  # ==========================================================================
 
   # Root path -> index.html
   if path == "/" or path == "":
@@ -219,9 +340,21 @@ proc handleRequest(req: Request, baseDir: string) {.async.} =
 
   try:
     if fileExists(filePath):
-      let content = readFile(filePath)
+      var content = readFile(filePath)
       let mimeType = getMimeType(filePath)
       let contentEncoding = getContentEncoding(filePath)
+
+      # Inject polyfill into HTML files (only when nodeApi is enabled)
+      if nodeApiEnabled and mimeType == "text/html":
+        let polyfillTag = """<script src="/__polyfill__.js"></script>"""
+        # Insert before </head> or at start of <body>
+        if content.contains("</head>"):
+          content = content.replace("</head>", polyfillTag & "\n</head>")
+        elif content.contains("<body"):
+          let bodyIdx = content.find("<body")
+          let endTag = content.find(">", bodyIdx)
+          if endTag > 0:
+            content = content[0..endTag] & "\n" & polyfillTag & content[endTag+1..^1]
 
       # Build headers with optional Content-Encoding for compressed files
       var headers = @[
@@ -237,12 +370,12 @@ proc handleRequest(req: Request, baseDir: string) {.async.} =
   except:
     await req.respond(Http500, "500 - Internal Server Error")
 
-proc startServer(port: int, baseDir: string) {.async.} =
+proc startServer(port: int, baseDir: string, nodeApiEnabled: bool) {.async.} =
   ## Start HTTP server
   var server = newAsyncHttpServer()
 
   proc callback(req: Request) {.async.} =
-    await handleRequest(req, baseDir)
+    await handleRequest(req, baseDir, nodeApiEnabled)
 
   echo &"[SERVER] Starting HTTP server on http://localhost:{port}"
   echo &"[SERVER] Serving files from: {baseDir}"
@@ -299,18 +432,47 @@ proc launchBrowser(config: Config, url: string): Process =
     if config.windowTitle.len > 0:
       args.add(&"--app-name={config.windowTitle}")
 
-  # Window size
-  args.add(&"--window-size={config.windowWidth},{config.windowHeight}")
+  # Window size and position (skip when maximized or fullscreen)
+  if not config.startMaximized and not config.startFullscreen:
+    args.add(&"--window-size={config.windowWidth},{config.windowHeight}")
+    
+    # Center window on screen (taskbar-aware)
+    let workArea = getWorkArea()
+    let posX = workArea.x + (workArea.width - config.windowWidth) div 2
+    let posY = workArea.y + (workArea.height - config.windowHeight) div 2
+    args.add(&"--window-position={posX},{posY}")
 
-  # Center window on screen (taskbar-aware)
-  let workArea = getWorkArea()
-  let posX = workArea.x + (workArea.width - config.windowWidth) div 2
-  let posY = workArea.y + (workArea.height - config.windowHeight) div 2
-  args.add(&"--window-position={posX},{posY}")
-
-  # Default flags for clean environment (hardcoded)
-  args.add("--disable-extensions") # Disable all browser extensions
-  args.add("--disable-translate") # Disable Google Translate popup
+  # Default flags for clean environment (browser-specific)
+  let isEdge = config.browserExe.toLowerAscii().contains("edge")
+  
+  if isEdge:
+    # Microsoft Edge specific flags
+    args.add("--no-first-run")
+    args.add("--no-default-browser-check")
+    args.add("--disable-sync")
+    args.add("--disable-features=msEdgeWhatsNewUI,msEdgeSyncAndIdentity")
+    args.add("--disable-notifications")
+    args.add("--disable-extensions")
+    args.add("--disable-translate")
+    args.add("--disable-background-networking")
+  else:
+    # Chrome/Chromium flags
+    args.add("--no-first-run")
+    args.add("--no-default-browser-check")
+    args.add("--disable-sync")
+    args.add("--disable-features=TranslateUI")
+    args.add("--disable-notifications")
+    args.add("--disable-extensions")
+    args.add("--disable-translate")
+    args.add("--disable-infobars")
+    args.add("--disable-component-update")
+    args.add("--disable-background-networking")
+  
+  # Window state flags
+  if config.startFullscreen:
+    args.add("--start-fullscreen")
+  elif config.startMaximized:
+    args.add("--start-maximized")
   
   # Chromium args from package.json (appended to defaults)
   if config.chromiumArgs.len > 0:
@@ -394,6 +556,7 @@ proc main() =
   echo &"[CONFIG] Title: {config.windowTitle}"
   echo &"[CONFIG] Window Size: {config.windowWidth}x{config.windowHeight}"
   echo &"[CONFIG] Browser: {config.browserExe}"
+  echo &"[CONFIG] Node.js API: {config.nodeApi}"
   if config.chromiumArgs.len > 0:
     echo &"[CONFIG] Chromium Args: {config.chromiumArgs}"
   echo ""
@@ -414,7 +577,7 @@ proc main() =
   let url = &"http://localhost:{port}/{config.main}"
 
   # Start server in async thread
-  asyncCheck startServer(port, baseDir)
+  asyncCheck startServer(port, baseDir, config.nodeApi)
 
   # Wait a bit for server to be ready
   echo "[INFO] Waiting for server to start..."

@@ -5,6 +5,10 @@
 <h1 align="center">Valet</h1>
 <p align="center">Lightweight local web server and browser launcher — serve HTML5 apps with zero configuration</p>
 
+<p align="center">
+ <a href="https://ryanbram.itch.io/valet-lightweight-local-web-server-and-browser-launcher">Download</a>
+</p>
+
 ---
 
 ## Features
