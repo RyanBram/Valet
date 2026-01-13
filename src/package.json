@@ -7,14 +7,17 @@
     "height": 720
   },
   "valet": {
+    "nodeApi": false,
     "server": {
       "port": 0
     },
     "browser": {
       "executable": "msedge",
       "userDataDir": ".valet_data",
-      "privateMode": true,
-      "showToolbar": true
+      "privateMode": false,
+      "showToolbar": false,
+      "startMaximized": false,
+      "startFullscreen": false
     }
   }
 }

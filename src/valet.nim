@@ -1,5 +1,5 @@
 import std/[asynchttpserver, asyncdispatch, json, os, osproc, strutils,
-    strformat, times, net, uri]
+    strformat, times, net, uri, atomics]
 
 when defined(windows):
   type
@@ -45,8 +45,8 @@ type
     privateMode: bool
     showToolbar: bool # false = app mode, true = regular browser with toolbar
     nodeApi: bool # true = enable Node.js API (require fs), false = plain web server
-    startMaximized: bool # true = start window maximized
-    startFullscreen: bool # true = start in fullscreen mode
+    maximize: bool # true = start window maximized
+    fullscreen: bool # true = start in fullscreen/kiosk mode
 
 proc findAvailablePort(startPort: int = 8000): int =
   ## Find available port starting from startPort
@@ -105,15 +105,15 @@ proc loadConfig(filename: string): Config =
       result.userDataDir = browser{"userDataDir"}.getStr(".valet_data")
       result.privateMode = browser{"privateMode"}.getBool(false)
       result.showToolbar = browser{"showToolbar"}.getBool(true)
-      result.startMaximized = browser{"startMaximized"}.getBool(false)
-      result.startFullscreen = browser{"startFullscreen"}.getBool(false)
+      result.maximize = browser{"maximize"}.getBool(false)
+      result.fullscreen = browser{"fullscreen"}.getBool(false)
     else:
       result.browserExe = "msedge"
       result.userDataDir = ".valet_data"
       result.privateMode = false
       result.showToolbar = true
-      result.startMaximized = false
-      result.startFullscreen = false
+      result.maximize = false
+      result.fullscreen = false
     
     # Node.js API toggle (default: false - plain web server mode)
     result.nodeApi = valet{"nodeApi"}.getBool(false)
@@ -124,8 +124,8 @@ proc loadConfig(filename: string): Config =
     result.userDataDir = ".valet_data"
     result.privateMode = false
     result.showToolbar = true
-    result.startMaximized = false
-    result.startFullscreen = false
+    result.maximize = false
+    result.fullscreen = false
     result.nodeApi = false  # Plain web server by default
 
 proc createDefaultPackageJson(filename: string) =
@@ -148,8 +148,8 @@ proc createDefaultPackageJson(filename: string) =
         "userDataDir": ".valet_data",
         "privateMode": false,
         "showToolbar": true,
-        "startMaximized": false,
-        "startFullscreen": false
+        "maximize": false,
+        "fullscreen": false
       }
     }
   }
@@ -222,12 +222,51 @@ proc getContentEncoding(filename: string): string =
 # Polyfill script for NW.js compatibility
 const polyfillJs = staticRead("polyfill.js")
 
+# Heartbeat script for browser alive detection
+const heartbeatJs = """
+<script>
+(function() {
+  function sendHeartbeat() {
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/__heartbeat__', true);
+      xhr.send();
+    } catch(e) {}
+  }
+  setInterval(sendHeartbeat, 2000); // Every 2 seconds
+  sendHeartbeat(); // Initial heartbeat
+})();
+</script>
+"""
+
+# Global heartbeat timestamp (thread-safe)
+var lastHeartbeat: Atomic[int64]
+var heartbeatInitialized: Atomic[bool]
+
+proc updateHeartbeat() =
+  lastHeartbeat.store(epochTime().int64)
+  heartbeatInitialized.store(true)
+
+proc getHeartbeatAge(): float =
+  if not heartbeatInitialized.load:
+    return 0.0
+  return epochTime() - lastHeartbeat.load.float
+
 proc handleRequest(req: Request, baseDir: string, nodeApiEnabled: bool) {.async.} =
   ## Handle HTTP request - includes filesystem API endpoints if enabled
   var path = req.url.path
 
   # URL decode path (handles %20 for spaces, etc.)
   path = decodeUrl(path)
+
+  # ==========================================================================
+  # HEARTBEAT ENDPOINT (always enabled for browser exit detection)
+  # ==========================================================================
+  
+  if path == "/__heartbeat__" and req.reqMethod == HttpPost:
+    updateHeartbeat()
+    await req.respond(Http200, "ok", newHttpHeaders([("Content-Type", "text/plain")]))
+    return
 
   # ==========================================================================
   # FILESYSTEM API ENDPOINTS (only when nodeApi is enabled)
@@ -344,17 +383,26 @@ proc handleRequest(req: Request, baseDir: string, nodeApiEnabled: bool) {.async.
       let mimeType = getMimeType(filePath)
       let contentEncoding = getContentEncoding(filePath)
 
-      # Inject polyfill into HTML files (only when nodeApi is enabled)
-      if nodeApiEnabled and mimeType == "text/html":
-        let polyfillTag = """<script src="/__polyfill__.js"></script>"""
+      # Inject scripts into HTML files
+      if mimeType == "text/html":
+        var injectedScripts = ""
+        
+        # Always inject heartbeat for browser exit detection
+        injectedScripts = injectedScripts & heartbeatJs
+        
+        # Inject polyfill only when nodeApi is enabled
+        if nodeApiEnabled:
+          injectedScripts = injectedScripts & """<script src="/__polyfill__.js"></script>"""
+        
         # Insert before </head> or at start of <body>
-        if content.contains("</head>"):
-          content = content.replace("</head>", polyfillTag & "\n</head>")
-        elif content.contains("<body"):
-          let bodyIdx = content.find("<body")
-          let endTag = content.find(">", bodyIdx)
-          if endTag > 0:
-            content = content[0..endTag] & "\n" & polyfillTag & content[endTag+1..^1]
+        if injectedScripts.len > 0:
+          if content.contains("</head>"):
+            content = content.replace("</head>", injectedScripts & "\n</head>")
+          elif content.contains("<body"):
+            let bodyIdx = content.find("<body")
+            let endTag = content.find(">", bodyIdx)
+            if endTag > 0:
+              content = content[0..endTag] & "\n" & injectedScripts & content[endTag+1..^1]
 
       # Build headers with optional Content-Encoding for compressed files
       var headers = @[
@@ -408,6 +456,13 @@ proc findBrowserPath(browserName: string): string =
         getEnv("PROGRAMFILES(X86)") / r"Google\Chrome\Application\chrome.exe",
         getEnv("LOCALAPPDATA") / r"Google\Chrome\Application\chrome.exe"
       ]
+    of "firefox":
+      @[
+        r"C:\Program Files\Mozilla Firefox\firefox.exe",
+        r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+        getEnv("PROGRAMFILES") / r"Mozilla Firefox\firefox.exe",
+        getEnv("PROGRAMFILES(X86)") / r"Mozilla Firefox\firefox.exe"
+      ]
     else:
       @[browserName] # Use browser name as-is if unknown
 
@@ -424,80 +479,127 @@ proc launchBrowser(config: Config, url: string): Process =
   ## Launch browser with specified configuration
   ## Returns: Process object for monitoring
   var args: seq[string] = @[]
-
-  # Use --app mode only if showToolbar is false (hide browser chrome)
-  if not config.showToolbar:
-    args.add(&"--app={url}")
-    # Set window title (best effort - may not work in all browsers)
-    if config.windowTitle.len > 0:
-      args.add(&"--app-name={config.windowTitle}")
-
-  # Window size and position (skip when maximized or fullscreen)
-  if not config.startMaximized and not config.startFullscreen:
-    args.add(&"--window-size={config.windowWidth},{config.windowHeight}")
+  
+  let browserLower = config.browserExe.toLowerAscii()
+  let isEdge = browserLower.contains("edge")
+  let isFirefox = browserLower.contains("firefox")
+  
+  if isFirefox:
+    # ========================================================================
+    # FIREFOX SPECIFIC FLAGS
+    # Firefox uses different command line syntax than Chromium
+    # ========================================================================
     
-    # Center window on screen (taskbar-aware)
-    let workArea = getWorkArea()
-    let posX = workArea.x + (workArea.width - config.windowWidth) div 2
-    let posY = workArea.y + (workArea.height - config.windowHeight) div 2
-    args.add(&"--window-position={posX},{posY}")
-
-  # Default flags for clean environment (browser-specific)
-  let isEdge = config.browserExe.toLowerAscii().contains("edge")
-  
-  if isEdge:
-    # Microsoft Edge specific flags
-    args.add("--no-first-run")
-    args.add("--no-default-browser-check")
-    args.add("--disable-sync")
-    args.add("--disable-features=msEdgeWhatsNewUI,msEdgeSyncAndIdentity")
-    args.add("--disable-notifications")
-    args.add("--disable-extensions")
-    args.add("--disable-translate")
-    args.add("--disable-background-networking")
-  else:
-    # Chrome/Chromium flags
-    args.add("--no-first-run")
-    args.add("--no-default-browser-check")
-    args.add("--disable-sync")
-    args.add("--disable-features=TranslateUI")
-    args.add("--disable-notifications")
-    args.add("--disable-extensions")
-    args.add("--disable-translate")
-    args.add("--disable-infobars")
-    args.add("--disable-component-update")
-    args.add("--disable-background-networking")
-  
-  # Window state flags
-  if config.startFullscreen:
-    args.add("--start-fullscreen")
-  elif config.startMaximized:
-    args.add("--start-maximized")
-  
-  # Chromium args from package.json (appended to defaults)
-  if config.chromiumArgs.len > 0:
-    # Split chromium args by space and add them
-    let extraArgs = config.chromiumArgs.split(" ")
-    for arg in extraArgs:
-      if arg.len > 0:
-        args.add(arg)
-
-  # Always use user data directory for consistent window sizing
-  let currentDir = getCurrentDir()
-  let userDataPath = currentDir / config.userDataDir
-  args.add(&"--user-data-dir={userDataPath}")
-
-  # Add incognito/inprivate flag if requested (alongside user-data-dir)
-  if config.privateMode:
-    # Edge uses --inprivate, Chrome uses --incognito
-    if config.browserExe.toLowerAscii().contains("edge"):
-      args.add("--inprivate")
-    else:
-      args.add("--incognito")
-
-  # Add URL at the end for toolbar mode
-  if config.showToolbar:
+    # Firefox doesn't have app mode, just open URL
+    args.add("-new-window")
     args.add(url)
+    
+    # Window size (Firefox uses -width and -height)
+    if not config.maximize and not config.fullscreen:
+      args.add("-width")
+      args.add($config.windowWidth)
+      args.add("-height")
+      args.add($config.windowHeight)
+    
+    # Fullscreen mode (Firefox uses -kiosk)
+    if config.fullscreen:
+      args.add("-kiosk")
+    # Note: Firefox doesn't have --start-maximized equivalent
+    
+    # Profile directory (Firefox uses -profile)
+    let currentDir = getCurrentDir()
+    let userDataPath = currentDir / config.userDataDir
+    if not dirExists(userDataPath):
+      createDir(userDataPath)
+    args.add("-profile")
+    args.add(userDataPath)
+    
+    # Private mode (Firefox uses -private-window but conflicts with -new-window)
+    # Skip if privateMode as it requires different approach
+    if config.privateMode:
+      echo "[BROWSER] Note: Firefox private mode not fully supported in this configuration"
+    
+    # Firefox headless cleanup flags (skip unsupported ones gracefully)
+    args.add("-no-remote")  # Don't connect to existing Firefox instance
+    
+  else:
+    # ========================================================================
+    # CHROMIUM-BASED FLAGS (Edge, Chrome)
+    # ========================================================================
+    
+    # Use --app mode only if showToolbar is false AND not in kiosk mode
+    # (kiosk mode already hides browser chrome, so --app is redundant and may conflict)
+    if not config.showToolbar and not config.fullscreen:
+      args.add(&"--app={url}")
+      # Set window title (best effort - may not work in all browsers)
+      if config.windowTitle.len > 0:
+        args.add(&"--app-name={config.windowTitle}")
+
+    # Window size and position (skip when maximized or fullscreen)
+    if not config.maximize and not config.fullscreen:
+      args.add(&"--window-size={config.windowWidth},{config.windowHeight}")
+      
+      # Center window on screen (taskbar-aware)
+      let workArea = getWorkArea()
+      let posX = workArea.x + (workArea.width - config.windowWidth) div 2
+      let posY = workArea.y + (workArea.height - config.windowHeight) div 2
+      args.add(&"--window-position={posX},{posY}")
+
+    # Default flags for clean environment (browser-specific)
+    if isEdge:
+      # Microsoft Edge specific flags
+      args.add("--no-first-run")
+      args.add("--no-default-browser-check")
+      args.add("--disable-sync")
+      args.add("--disable-features=msEdgeWhatsNewUI,msEdgeSyncAndIdentity")
+      args.add("--disable-notifications")
+      args.add("--disable-extensions")
+      args.add("--disable-translate")
+      args.add("--disable-background-networking")
+    else:
+      # Chrome/Chromium flags
+      args.add("--no-first-run")
+      args.add("--no-default-browser-check")
+      args.add("--disable-sync")
+      args.add("--disable-features=TranslateUI")
+      args.add("--disable-notifications")
+      args.add("--disable-extensions")
+      args.add("--disable-translate")
+      args.add("--disable-infobars")
+      args.add("--disable-component-update")
+      args.add("--disable-background-networking")
+    
+    # Window state flags
+    if config.fullscreen:
+      args.add("--kiosk")  # True kiosk mode (same as Firefox -kiosk)
+    elif config.maximize:
+      args.add("--start-maximized")
+    
+    # Chromium args from package.json (appended to defaults)
+    if config.chromiumArgs.len > 0:
+      # Split chromium args by space and add them
+      let extraArgs = config.chromiumArgs.split(" ")
+      for arg in extraArgs:
+        if arg.len > 0:
+          args.add(arg)
+
+    # Always use user data directory for consistent window sizing
+    let currentDir = getCurrentDir()
+    let userDataPath = currentDir / config.userDataDir
+    args.add(&"--user-data-dir={userDataPath}")
+
+    # Add incognito/inprivate flag if requested (alongside user-data-dir)
+    if config.privateMode:
+      # Edge uses --inprivate, Chrome uses --incognito
+      if isEdge:
+        args.add("--inprivate")
+      else:
+        args.add("--incognito")
+
+    # Add URL at the end for toolbar mode OR kiosk/fullscreen mode
+    # (In app mode, URL is already part of --app={url})
+    if config.showToolbar or config.fullscreen:
+      args.add(url)
 
   # Find actual browser path
   let browserPath = findBrowserPath(config.browserExe)
@@ -518,12 +620,48 @@ proc launchBrowser(config: Config, url: string): Process =
     echo &"[ERROR] Error message: {e.msg}"
     echo "[INFO] Trying Chrome as fallback..."
 
-    # Try Chrome as fallback
+    # Try Chrome as fallback - rebuild args for Chromium compatibility
     let chromePath = findBrowserPath("chrome")
+    var chromeArgs: seq[string] = @[]
+    
+    # Rebuild Chromium-compatible args (can't reuse Firefox args)
+    if not config.showToolbar and not config.fullscreen:
+      chromeArgs.add(&"--app={url}")
+    
+    if not config.maximize and not config.fullscreen:
+      chromeArgs.add(&"--window-size={config.windowWidth},{config.windowHeight}")
+      let workArea = getWorkArea()
+      let posX = workArea.x + (workArea.width - config.windowWidth) div 2
+      let posY = workArea.y + (workArea.height - config.windowHeight) div 2
+      chromeArgs.add(&"--window-position={posX},{posY}")
+    
+    # Chrome default flags
+    chromeArgs.add("--no-first-run")
+    chromeArgs.add("--no-default-browser-check")
+    chromeArgs.add("--disable-sync")
+    chromeArgs.add("--disable-features=TranslateUI")
+    chromeArgs.add("--disable-notifications")
+    chromeArgs.add("--disable-extensions")
+    
+    if config.fullscreen:
+      chromeArgs.add("--kiosk")
+    elif config.maximize:
+      chromeArgs.add("--start-maximized")
+    
+    let currentDir = getCurrentDir()
+    let userDataPath = currentDir / config.userDataDir
+    chromeArgs.add(&"--user-data-dir={userDataPath}")
+    
+    if config.privateMode:
+      chromeArgs.add("--incognito")
+    
+    if config.showToolbar or config.fullscreen:
+      chromeArgs.add(url)
+    
     try:
       result = startProcess(
         chromePath,
-        args = args,
+        args = chromeArgs,
         options = {poUsePath, poStdErrToStdOut}
       )
       echo "[BROWSER] Chrome launched successfully"
@@ -594,20 +732,39 @@ proc main() =
   echo "================================================"
   if config.browserExe != "":
     echo "  Application Running"
+    echo "  Server will auto-shutdown when browser closes"
   else:
     echo "  Server Running (Server-Only Mode)"
     echo &"  URL: {url}"
-  echo "  Press Ctrl+C or close console to exit"
+    echo "  Press Ctrl+C or close console to exit"
   echo "================================================"
   echo ""
 
-  # Run event loop
+  # Heartbeat timeout (seconds) - shutdown after no heartbeat for this long
+  const heartbeatTimeout = 10.0
+  
+  # Run event loop with heartbeat monitoring
   try:
-    runForever()
+    if config.browserExe != "":
+      # Browser mode - monitor heartbeat and auto-shutdown
+      while true:
+        poll(100)  # Process async events
+        
+        # Check heartbeat timeout only after first heartbeat received
+        let age = getHeartbeatAge()
+        if heartbeatInitialized.load and age > heartbeatTimeout:
+          echo ""
+          echo "[INFO] Browser closed - no heartbeat for ", age.int, " seconds"
+          echo "[INFO] Shutting down server..."
+          break
+    else:
+      # Server-only mode - run forever
+      runForever()
   except:
     echo ""
     echo "[INFO] Shutting down..."
-    quit(0)
+  
+  quit(0)
 
 when isMainModule:
   main()
